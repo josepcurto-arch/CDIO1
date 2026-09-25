@@ -11,10 +11,10 @@ nir_path = script_dir / "nir.tif"
 
 # 1. Open files
 with rasterio.open(green_path) as src_green:
-    green = src_green.read(1).astype(np.float32)
+    green = src_green.read(1).astype(float)
 
 with rasterio.open(nir_path) as src_nir:
-    nir = src_nir.read(1).astype(np.float32)
+    nir = src_nir.read(1).astype(float)
 
 # 2. NDWI = (Green - NIR) / (Green + NIR) with error control
 with np.errstate(divide="ignore", invalid="ignore"): # Doesn't show a error each time it divides by zero
