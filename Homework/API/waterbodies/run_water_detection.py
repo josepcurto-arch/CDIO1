@@ -6,8 +6,7 @@ from detect_water import detect_waterbody, save_as_geotiff
 from coastline import estimate_coastline
 
 # PAS 0: Definir la ruta base del projecte (~/CDIO1) per evitar errors de directori
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 project_name = "castelldefels_h1_2025"
 date_str = "20250115" 
 

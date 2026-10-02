@@ -1,6 +1,5 @@
 import numpy as np
-from detect_water import detect_waterbody
-
+from Homework.API.waterbodies.detect_water import detect_waterbody
 def test_detect_waterbody():
     # Matriz NDWI de prova
     test_ndwi = np.array([
