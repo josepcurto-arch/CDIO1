@@ -8,30 +8,42 @@ import numpy as np
 import xarray as xr
 import rioxarray  # Necessari per exportar a GeoTIFF (.tif)
 import warnings
+import yaml
 
+print("Iniciant programa!")
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
-# 1. Rutes del projecte
+
+#Aconseguim la direcció on està el codi que s'executa 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-geojson_path = os.path.join(script_dir, "polygon.geojson")
+
+#Obrim el fitxer de configuració amb YALM
+with open(os.path.join(script_dir,'config.yaml')) as f:
+    config = yaml.load(f, Loader=yaml.FullLoader)
+
+# 1. Un cop hem obtingut accés a la configuració YAML, podem obrir el poligon geojson
+geojson_path = os.path.join(script_dir, config['geojson_file'])
 
 try:
     gdf = gpd.read_file(geojson_path).to_crs(epsg=4326)
     geometry = gdf.geometry.iloc[0].__geo_interface__
     bbox = list(gdf.total_bounds)
+    print("Arxiu de configuració i geojson carregat")
+
 except Exception as e:
     print(f"Error en carregar el GeoJSON: {e}")
     exit(1)
 
 # 2. Paràmetres de la cerca
-BANDS = ['red', 'green', 'blue', 'nir']
-MAX_CLOUD_COVER = 40  # %
+BANDS = config['bands']
+MAX_CLOUD_COVER = config['search']['max_cloud_cover']
 
 try:
-    catalog = pystac_client.Client.open('https://earth-search.aws.element84.com/v1')
+    print("Cercant elements al catàleg que compleixin els filtres")
+    catalog = pystac_client.Client.open(config['search']['catalog_url'])
     search = catalog.search(
-        collections=['sentinel-2-l2a'],
-        datetime='2025-01-01/2025-06-30',
+        collections=config['search']['collection'],
+        datetime= config['search']['start_date'] + "/" + config['search']['end_date'],
         intersects=geometry,
         query=[f'eo:cloud_cover<{MAX_CLOUD_COVER}']
     )
@@ -64,6 +76,7 @@ stack = stackstac.stack(items, assets=BANDS, bounds_latlon=bbox, epsg=4326, chun
 
 # --- FUNCIÓ PER A LA DESCÀRREGA I PROCESSAMENT D'UNA DATA EN GEOTIFF ---
 def process_single_date(t_idx):
+    iteration = 0
     try:
         data_date = stack.isel(time=t_idx)
         raw_time = str(data_date.time.values)
@@ -103,11 +116,10 @@ def process_single_date(t_idx):
 if __name__ == '__main__':
     total_times = len(stack.time)
 
-    print(f"\n--- INICIANT PROCESSAMENT D'EXPORTACIÓ GEOTIFF AMB MULTITHREADING (4 FILS) ---")
+    print(f"\n--- INICIANT PROCESSAMENT D'EXPORTACIÓ GEOTIFF AMB MULTITHREADING ---")
     start_multi = time.time()
-    print(os.cpu_count())
 
-    with ThreadPoolExecutor(max_workers=12000) as executor:
+    with ThreadPoolExecutor() as executor:
         results_multi = list(executor.map(process_single_date, range(total_times)))
 
     end_multi = time.time()

@@ -16,4 +16,3 @@ tqdm>=4.70.0,<5.0.0
 xarray>=2025.6.1,<2026.0.0  # uses calver, instead of semver
 pystac_client>=0.9.0,<1.0.0
 rioxarray>=0.23.0,<0.24.0
-
