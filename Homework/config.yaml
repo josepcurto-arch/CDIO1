@@ -1,5 +1,4 @@
 geojson_file: "polygon.geojson"
-output_dir: "."
 
 search:
   catalog_url: "https://earth-search.aws.element84.com/v1"
@@ -18,3 +17,9 @@ bands:
 performance:
   max_workers: 4
   chunk_size: 2048
+
+# Noves rutetes de sortida per als resultats analítics
+outputs:
+  waterbody_dir: "outputs/waterbody"
+  coastline_dir: "outputs/coastline"
+  plots_dir: "outputs/plots"
