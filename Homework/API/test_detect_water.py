@@ -18,3 +18,6 @@ def test_detect_waterbody():
     
     # Comprova que detect_waterbody torni exactament la matriu esperada
     np.testing.assert_array_equal(result, expected)
+
+    # ------
+    # Només comprova que el codi funcioni com s'espera.
