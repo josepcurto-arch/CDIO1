@@ -128,3 +128,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-plot", action="store_true", help="Desar els resultats sense mostrar els gràfics.")
     args = parser.parse_args()
     main(args.project, mostrar_grafic=not args.no_plot)
+
+# Per donar-li run:
+# python coastline_estimator/calculate_erosion.py -p castelldefels_h1_2025
+# python coastline_estimator/analyze.py -p castelldefels_h1_2025
