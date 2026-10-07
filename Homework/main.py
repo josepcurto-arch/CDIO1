@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -13,41 +14,27 @@ import rioxarray
 import rasterio
 import matplotlib.pyplot as plt
 
-# Importem únicament la línia de costa de l'altre mòdul si cal
-from coastline import estimate_coastline
-
 print("Iniciant programa!")
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 # ------------------------------------------------------------------------------
-# FUNCIONS DE DETECCIÓ D'AIGUA I GUARDAT DIRECTES
+# 1. CARREGAR CONFIGURACIÓ, RUTES I MÒDULS LOCALS
 # ------------------------------------------------------------------------------
-def detect_waterbody(ndwi_array):
-    """Agafa la matriu NDWI i genera un array de 1 i 0: 1 per aigua, 0 per terra."""
-    waterbody = (ndwi_array > 0) & (~np.isnan(ndwi_array))
-    return waterbody.astype(np.uint8)
+project_root = os.path.dirname(os.path.abspath(__file__))  # Homework/
 
-def save_as_geotiff(output_path, array, reference_profile):
-    """Desa la matriu processada com un arxiu GeoTIFF preservant informació geogràfica."""
-    profile = reference_profile.copy()
-    profile.update(dtype=rasterio.uint8, count=1, nodata=0)
-    
-    with rasterio.open(output_path, 'w', **profile) as dst:
-        dst.write(array, 1)
+api_dir = os.path.join(project_root, 'API')
+if api_dir not in sys.path:
+    sys.path.insert(0, api_dir)
 
-# ------------------------------------------------------------------------------
-# 1. CARREGAR CONFIGURACIÓ I RUTES
-# ------------------------------------------------------------------------------
-script_dir = os.path.dirname(os.path.abspath(__file__))  # Homework/API
-project_root = os.path.dirname(script_dir)             # Homework/
+# IMPORTACIONS DEL MÒDUL LOCAL
+from waterbodies.coastline import detect_waterbody, estimate_coastline
 
 config_path = os.path.join(project_root, 'config.yaml')
 
 with open(config_path, 'r') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
 
-# Polígon GeoJSON des de la carpeta del codi (Homework/API)
-geojson_path = os.path.join(script_dir, config['geojson_file'])
+geojson_path = os.path.join(project_root, 'API', config['geojson_file'])
 
 try:
     gdf = gpd.read_file(geojson_path).to_crs(epsg=4326)
@@ -55,9 +42,8 @@ try:
     bbox = list(gdf.total_bounds)
     print("Arxiu de configuració i GeoJSON carregats correctament.")
 except Exception as e:
-    print(f"Error en carregar el GeoJSON: {e}")
+    print(f"Error en carregar el GeoJSON ({geojson_path}): {e}")
     exit(1)
-
 # ------------------------------------------------------------------------------
 # 2. CERCA AL CATÀLEG STAC
 # ------------------------------------------------------------------------------
