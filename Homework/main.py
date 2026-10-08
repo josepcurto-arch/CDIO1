@@ -4,15 +4,19 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 
+import matplotlib
+# Configurar backend no interactiu ABANS d'importar pyplot (crític per multithreading)
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 import yaml
+import pandas as pd
 import geopandas as gpd
 import pystac_client
 import stackstac
 import numpy as np
 import xarray as xr
 import rioxarray
-import rasterio
-import matplotlib.pyplot as plt
 
 print("Iniciant programa!")
 warnings.filterwarnings('ignore', category=RuntimeWarning)
@@ -23,11 +27,15 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 project_root = os.path.dirname(os.path.abspath(__file__))  # Homework/
 
 api_dir = os.path.join(project_root, 'API')
-if api_dir not in sys.path:
-    sys.path.insert(0, api_dir)
+waterbodies_dir = os.path.join(api_dir, 'waterbodies')
 
-# IMPORTACIONS DEL MÒDUL LOCAL
-from waterbodies.coastline import detect_waterbody, estimate_coastline
+# Afegir directoris locals al sys.path per permetre les importacions
+for d in [api_dir, waterbodies_dir]:
+    if d not in sys.path:
+        sys.path.insert(0, d)
+
+# Importació de les funcions des de coastline_functions.py
+from coastline_functions import detect_waterbody, estimate_coastline
 
 config_path = os.path.join(project_root, 'config.yaml')
 
@@ -44,6 +52,7 @@ try:
 except Exception as e:
     print(f"Error en carregar el GeoJSON ({geojson_path}): {e}")
     exit(1)
+
 # ------------------------------------------------------------------------------
 # 2. CERCA AL CATÀLEG STAC
 # ------------------------------------------------------------------------------
@@ -95,16 +104,14 @@ for folder_path in folders.values():
 # 4. CREACIÓ DE L'STACK
 # ------------------------------------------------------------------------------
 stack = stackstac.stack(items, assets=BANDS, bounds_latlon=bbox, epsg=4326, chunksize=CHUNK_SIZE)
-
 # ------------------------------------------------------------------------------
 # 5. FUNCIÓ MULTITHREAD DE PROCESSAMENT I ANÀLISI
 # ------------------------------------------------------------------------------
 def process_single_date(t_idx):
     try:
         data_date = stack.isel(time=t_idx)
-        raw_time = str(data_date.time.values)
-        # Format de data: AAAAMMDD
-        date_str = raw_time[:10].replace('-', '')
+        # Format de data segur: AAAAMMDD
+        date_str = pd.to_datetime(data_date.time.values).strftime('%Y%m%d')
 
         # 1. Exportar bandes individuals
         for band_name in BANDS:
@@ -129,36 +136,42 @@ def process_single_date(t_idx):
         ndwi_rio = ndwi.rio.write_crs("EPSG:4326")
         ndwi_rio.rio.to_raster(ndwi_output_path)
 
-        # 4. EXECUTAR DETECCIÓ DIRECTA D'AIGUA I LÍNregions DE COSTA
+        # 4. EXECUTAR DETECCIÓ DIRECTA D'AIGUA I LÍNIES DE COSTA
         ndwi_array = ndwi.values
         waterbody_array = detect_waterbody(ndwi_array)
         coastline_array = estimate_coastline(waterbody_array)
 
-        # Guardar les capes com a GeoTIFF directament via DataArray de xarray
-        water_da = xr.DataArray(waterbody_array, coords=ndwi.coords, dims=ndwi.dims)
+        # Preservar metadades geogràfiques originals amb copy(data=...)
+        water_da = ndwi.copy(data=waterbody_array)
         water_da.rio.write_crs("EPSG:4326").rio.to_raster(
             os.path.join(folders['waterbody'], f'waterbody_{date_str}.tif')
         )
 
-        coast_da = xr.DataArray(coastline_array, coords=ndwi.coords, dims=ndwi.dims)
+        coast_da = ndwi.copy(data=coastline_array)
         coast_da.rio.write_crs("EPSG:4326").rio.to_raster(
             os.path.join(folders['coastline'], f'coastline_{date_str}.tif')
         )
 
-        # 5. Generar i guardar les gràfiques PNG de comprovació
-        plt.figure()
-        plt.imshow(waterbody_array, cmap='Blues', vmin=0, vmax=1)
-        plt.title(f"Waterbody Detection ({date_str})")
-        plt.axis('off')
-        plt.savefig(os.path.join(folders['plots'], f'waterbody_{date_str}.png'), bbox_inches='tight')
-        plt.close()
+        # 5. Generar i guardar les gràfiques PNG (Thread-Safe + aspect='auto' per evitar imatges aplanades)
+        height, width = waterbody_array.shape
+        aspect_ratio = width / max(height, 1)
+        fig_height = max(3, 10 / aspect_ratio)
 
-        plt.figure()
-        plt.imshow(coastline_array, cmap='Reds', vmin=0, vmax=1)
-        plt.title(f"Coastline Estimation ({date_str})")
-        plt.axis('off')
-        plt.savefig(os.path.join(folders['plots'], f'coastline_{date_str}.png'), bbox_inches='tight')
-        plt.close()
+        # Plot Waterbody
+        fig_w, ax_w = plt.subplots(figsize=(10, fig_height))
+        ax_w.imshow(waterbody_array, cmap='Blues', vmin=0, vmax=1, aspect='auto')
+        ax_w.set_title(f"Waterbody Detection ({date_str})")
+        ax_w.axis('off')
+        fig_w.savefig(os.path.join(folders['plots'], f'waterbody_{date_str}.png'), bbox_inches='tight', dpi=150)
+        plt.close(fig_w)
+
+        # Plot Coastline
+        fig_c, ax_c = plt.subplots(figsize=(10, fig_height))
+        ax_c.imshow(coastline_array, cmap='Reds', vmin=0, vmax=1, aspect='auto')
+        ax_c.set_title(f"Coastline Estimation ({date_str})")
+        ax_c.axis('off')
+        fig_c.savefig(os.path.join(folders['plots'], f'coastline_{date_str}.png'), bbox_inches='tight', dpi=150)
+        plt.close(fig_c)
 
         print(f"Completada la data: {date_str}")
         return date_str
