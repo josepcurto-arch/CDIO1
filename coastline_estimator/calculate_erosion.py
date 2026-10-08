@@ -1,255 +1,134 @@
 import argparse
-import pickle
 import sys
-from datetime import datetime
 from pathlib import Path
 
-import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import rasterio
 from scipy.interpolate import splev, splprep
 from shapely.geometry import LineString, MultiPoint, Point
 
 import shoreline_utils as utils
 
-
-SPATIAL_SPACING = 10
-TRANSECT_LENGTH = 100
-
-
-def closest_ground_truth_file(ground_truth_dir, target_date):
-    base = Path(ground_truth_dir).expanduser().resolve()
-    if not base.is_dir():
-        print(f"Error: {base} is not a directory", file=sys.stderr)
-        sys.exit(1)
-
-    dated_files = []
-    for csv_file in base.glob("*.csv"):
-        date = utils.extract_date(csv_file.name)
-        if date is not None:
-            dated_files.append((date, csv_file))
-
-    if not dated_files:
-        raise FileNotFoundError(f"No dated CSV files found in {base}")
-
-    return min(dated_files, key=lambda row: abs(row[0] - target_date))
+ESPAIAMENT_ESPATIAL = 10   # Distància entre transectes (en metres)
+LONGITUD_TRANSECTE = 100  # Longitud de cada transecte (en metres)
 
 
-def load_reference(project_dir, shorelines, sorted_dates_str, ground_truth):
-    if ground_truth is None:
-        reference_date = sorted_dates_str[0]
-        reference_coords = shorelines[reference_date]
-        return reference_date, reference_coords, 1, False
+def distancia_interseccio_amb_signe(interseccio, px, py, normal):
+    """Calcula la distància amb signe des d'un punt del transecte fins a la intersecció amb la costa."""
+    if isinstance(interseccio, MultiPoint):
+        distancies = [Point(px, py).distance(punt) for punt in interseccio.geoms]
+        return distancies[int(np.argmin(distancies))]
 
-    first_date = datetime.strptime(sorted_dates_str[0], "%Y-%m-%d").date()
-    reference_date, gt_csv_path = closest_ground_truth_file(ground_truth, first_date)
-    reference_coords = np.loadtxt(gt_csv_path, delimiter="\t", skiprows=1)
-
-    gt_coords = utils.load_coords_csv(gt_csv_path)
-    utils.export_coords_to_kmz(gt_coords, gt_csv_path.with_suffix(".kmz"))
-
-    return reference_date.isoformat(), reference_coords, 0, True
-
-
-def signed_intersection_distance(intersection, px, py, normal):
-    if isinstance(intersection, MultiPoint):
-        distances = [Point(px, py).distance(point) for point in intersection.geoms]
-        return distances[int(np.argmin(distances))]
-
-    if isinstance(intersection, Point):
-        signed_vector = np.array([intersection.x - px, intersection.y - py])
-        distance = np.linalg.norm(signed_vector)
-        if np.dot(signed_vector, normal) < 0:
-            distance = -distance
-        return distance
+    if isinstance(interseccio, Point):
+        vector_signe = np.array([interseccio.x - px, interseccio.y - py])
+        distancia = np.linalg.norm(vector_signe)
+        if np.dot(vector_signe, normal) < 0:
+            distancia = -distancia
+        return distancia
 
     return np.nan
 
 
-def load_project_aoi(project_dir):
-    geojson_path = project_dir / "input" / "polygon.geojson"
-    mask_dir = project_dir / "output" / "estimated_waterbodies_images"
-    first_mask = next(mask_dir.glob("*.tif"), None)
-    if first_mask is None or not geojson_path.exists():
-        return None
+def main(projecte, mostrar_grafic=True):
+    directori_projecte = utils.project_path(projecte)
+    directori_sortida = directori_projecte / "output" / "estimated_erosion_accretion"
+    directori_sortida.mkdir(parents=True, exist_ok=True)
 
-    aoi = gpd.read_file(geojson_path).set_crs(4326, allow_override=True)
-    with rasterio.open(first_mask) as src:
-        return aoi.to_crs(src.crs)
+    ruta_csv = directori_projecte / "output" / "estimated_waterbodies_edges" / "all_shorelines.csv"
+    if not ruta_csv.exists():
+        print(f"Error: No s'ha trobat el fitxer {ruta_csv}", file=sys.stderr)
+        sys.exit(1)
 
+    df = pd.read_csv(ruta_csv)
+    linies_costa = {data: grup[["x", "y"]].values for data, grup in df.groupby("date")}
 
-def main(project, ground_truth=None, show_plot=True):
-    project_dir = utils.project_path(project)
-    output_dir = project_dir / "output" / "estimated_erosion_accretion"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if len(linies_costa) < 2:
+        print("Calen almenys 2 dates a all_shorelines.csv per calcular l'erosió/acreditació.", file=sys.stderr)
+        sys.exit(1)
 
-    csv_path = project_dir / "output" / "estimated_waterbodies_edges" / "all_shorelines.csv"
-    df = pd.read_csv(csv_path)
+    # 1. Utilitzem la primera data com a línia de base per construir la referència
+    data_referencia = sorted(linies_costa.keys())[0]
+    coordenades_referencia = linies_costa[data_referencia]
 
-    shorelines = {date: group[["x", "y"]].values for date, group in df.groupby("date")}
-    sorted_dates_str = sorted(shorelines.keys())
+    print(f"Generant línia de costa base utilitzant la data: {data_referencia}")
+    x = coordenades_referencia[:, 0]
+    y = coordenades_referencia[:, 1]
+    xy_nics = np.unique(np.column_stack((x, y)), axis=0)
+    x_nics = xy_nics[:, 0]
+    y_nics = xy_nics[:, 1]
 
-    reference_date, reference_coords, start_index, ordered = load_reference(
-        project_dir, shorelines, sorted_dates_str, ground_truth
-    )
+    linia_referencia = utils.build_ordered_linestring(coordenades_referencia, ordered=False)
+    longitud_costa = linia_referencia.length
+    n_punts = int(longitud_costa / ESPAIAMENT_ESPATIAL)
 
-    x = reference_coords[:, 0]
-    y = reference_coords[:, 1]
-    xy_unique = np.unique(np.column_stack((x, y)), axis=0)
-    x_unique = xy_unique[:, 0]
-    y_unique = xy_unique[:, 1]
-
-    reference_date_underscores = str(reference_date).replace("-", "_")
-    line_path = output_dir / f"ref_{reference_date_underscores}.pkl"
-    if line_path.exists() and line_path.stat().st_size > 0:
-        with open(line_path, "rb") as f:
-            reference_line = pickle.load(f)
-    else:
-        reference_line = utils.build_ordered_linestring(np.column_stack((x, y)), ordered)
-        if ground_truth is not None:
-            aoi = load_project_aoi(project_dir)
-            if aoi is not None:
-                reference_line = reference_line.intersection(aoi.unary_union)
-        with open(line_path, "wb") as f:
-            pickle.dump(reference_line, f)
-
-    shoreline_length = reference_line.length
-    n_points = int(shoreline_length / SPATIAL_SPACING)
-
-    tck, _ = splprep([x_unique, y_unique], s=0)
-    unew = np.linspace(0, 1, num=n_points)
-    x_smooth, y_smooth = splev(unew, tck)
+    # Ajust de Spline suavitzat per projectar transectes normals
+    tck, _ = splprep([x_nics, y_nics], s=0)
+    unew = np.linspace(0, 1, num=n_punts)
+    x_suau, y_suau = splev(unew, tck)
     dx, dy = splev(unew, tck, der=1)
 
-    fig, ax = plt.subplots(figsize=(12, 8))
-    x_ref, y_ref = reference_line.xy
-    ax.plot(x_ref, y_ref, "k--", label=f"Reference shoreline ({reference_date})", alpha=0.5)
-    ax.plot(x_smooth, y_smooth, "b", label=f"Smoothed shoreline ({reference_date})", alpha=0.7)
+    totes_distancies = []
 
-    for i in range(len(unew)):
-        px, py = x_smooth[i], y_smooth[i]
-        tx, ty = dx[i], dy[i]
-        normal = np.array([-ty, tx])
-        normal /= np.linalg.norm(normal)
-        start = (px - normal[0] * TRANSECT_LENGTH / 2, py - normal[1] * TRANSECT_LENGTH / 2)
-        end = (px + normal[0] * TRANSECT_LENGTH / 2, py + normal[1] * TRANSECT_LENGTH / 2)
-        ax.plot([start[0], end[0]], [start[1], end[1]], "g-", alpha=0.3)
-
-    distance_results = []
-    colors = ["r", "m", "c", "y"]
-    dist_reference = 0
-
-    for idx, date in enumerate(sorted_dates_str[start_index:]):
-        coords = shorelines[date]
-        if len(coords) < 2:
-            print(f"Skipping shoreline for {date} due to insufficient points.")
-            continue
-
-        print(f"Ordering shoreline for {date}...")
-        date_underscores = date.replace("-", "_")
-        line_cache_path = output_dir / f"line_{date_underscores}.pkl"
-        if line_cache_path.exists() and line_cache_path.stat().st_size > 0:
-            with open(line_cache_path, "rb") as f:
-                line = pickle.load(f)
-        else:
-            line = utils.build_ordered_linestring(coords, False)
-            with open(line_cache_path, "wb") as f:
-                pickle.dump(line, f)
-        print("Done")
+    # 2. Calcular distàncies a cada transecte per a totes les dates
+    for data, coordenades in linies_costa.items():
+        print(f"Processant data: {data}...")
+        linia = utils.build_ordered_linestring(coordenades, ordered=False)
 
         for i in range(len(unew)):
-            px, py = x_smooth[i], y_smooth[i]
-            if i > 0:
-                dist_reference += np.sqrt((px - x_smooth[i - 1]) ** 2 + (py - y_smooth[i - 1]) ** 2)
-
-            x_line, y_line = line.xy
-            ax.plot(
-                x_line,
-                y_line,
-                "--",
-                label=date if i == 0 else None,
-                color=colors[idx % len(colors)],
-            )
-
+            px, py = x_suau[i], y_suau[i]
             tx, ty = dx[i], dy[i]
             normal = np.array([-ty, tx])
-            normal /= np.linalg.norm(normal)
-            start = (px - normal[0] * TRANSECT_LENGTH / 2, py - normal[1] * TRANSECT_LENGTH / 2)
-            end = (px + normal[0] * TRANSECT_LENGTH / 2, py + normal[1] * TRANSECT_LENGTH / 2)
-            transect = LineString([start, end])
+            norm_val = np.linalg.norm(normal)
+            if norm_val > 0:
+                normal /= norm_val
 
-            distance = signed_intersection_distance(transect.intersection(line), px, py, normal)
-            distance_results.append(
-                {
-                    "date": date,
-                    "transect_id": i,
-                    "reference_x": px,
-                    "reference_y": py,
-                    "distance_m": distance,
-                }
-            )
+            inici = (px - normal[0] * LONGITUD_TRANSECTE / 2, py - normal[1] * LONGITUD_TRANSECTE / 2)
+            fi = (px + normal[0] * LONGITUD_TRANSECTE / 2, py + normal[1] * LONGITUD_TRANSECTE / 2)
+            transecte = LineString([inici, fi])
 
-    if distance_results:
-        print(f"Average distance between transects: {dist_reference / max(1, len(unew) - 1):.2f} meters")
+            dist = distancia_interseccio_amb_signe(transecte.intersection(linia), px, py, normal)
+            
+            totes_distancies.append({
+                "date": data,
+                "transect_id": i,
+                "reference_x": px,
+                "reference_y": py,
+                "distance_m": dist
+            })
 
-    distance_df = pd.DataFrame(distance_results)
-    total_transects = distance_df["transect_id"].nunique()
+    # Desar el CSV de distàncies per data i transecte
+    df_distancies = pd.DataFrame(totes_distancies)
+    csv_sortida = directori_sortida / "shoreline_distances.csv"
+    df_distancies.to_csv(csv_sortida, index=False)
+    print(f"\nResultats desats correctament a: {csv_sortida}")
 
-    print(f"Number of transects computed: {len(unew)}")
-    print(
-        "Number of valid transects with at least one valid distance: "
-        f"{distance_df.loc[distance_df['distance_m'].notna(), 'transect_id'].nunique()}"
-    )
-    print(f"First date in dataset: {distance_df['date'].min()}")
-    print(f"Last date in dataset: {distance_df['date'].max()}")
-    print(f"Number of distinct dates in dataset: {distance_df['date'].nunique()}")
-
-    summary_df = (
-        distance_df.groupby("date")
-        .agg(
-            avg_distance_m=("distance_m", "mean"),
-            median_distance_m=("distance_m", "median"),
-            std_distance_m=("distance_m", "std"),
-            max_distance_m=("distance_m", "max"),
-            min_distance_m=("distance_m", "min"),
-            valid_points=("distance_m", lambda values: values.notna().sum()),
-        )
-        .reset_index()
-    )
-
-    summary_df["coverage_ratio"] = summary_df["valid_points"] / total_transects
-    summary_df["range_distance_m"] = summary_df["max_distance_m"] - summary_df["min_distance_m"]
-
-    summary_df.to_csv(output_dir / "distances_summary.csv", index=False)
-    distance_df.to_csv(output_dir / "shoreline_distances.csv", index=False)
-
-    ax.set_title("Shoreline Geometry and Transect Intersections")
-    ax.set_xlabel("X (meters, projected)")
-    ax.set_ylabel("Y (meters, projected)")
-    ax.legend()
-    ax.axis("equal")
-    plt.grid(True)
-    if show_plot:
+    # Gràfic explicatiu si no es desactiva
+    if mostrar_grafic:
+        plt.figure(figsize=(10, 5))
+        df_mitjana = df_distancies.groupby("date")["distance_m"].mean().reset_index()
+        plt.plot(df_mitjana["date"], df_mitjana["distance_m"], marker="o", linestyle="-", color="tab:blue")
+        plt.xlabel("Data")
+        plt.ylabel("Distància mitjana a la costa base (m)")
+        plt.title("Evolució de la Línia de Costa (Erosió / Acreditació)")
+        plt.xticks(rotation=45)
+        plt.grid(True)
+        plt.tight_layout()
         plt.show()
-    else:
-        plt.close(fig)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Estimate erosion and accretion from shoreline data.")
+    parser = argparse.ArgumentParser(description="Calcula l'erosió/acreditació basant-se en transectes perpendiculars.")
     parser.add_argument(
         "-p",
         "--project",
         required=True,
-        help="Project name under coastline_estimator/projects.",
+        help="Nom del projecte ubicat a coastline_estimator/projects.",
     )
-    parser.add_argument(
-        "-g",
-        "--ground-truth",
-        help="Path to a folder containing ground truth CSV files to use as a reference.",
-    )
-    parser.add_argument("--no-plot", action="store_true", help="Write CSV outputs without opening plots.")
+    parser.add_argument("--no-plot", action="store_true", help="Desar els resultats sense mostrar els gràfics.")
     args = parser.parse_args()
-    main(args.project, args.ground_truth, show_plot=not args.no_plot)
+    main(args.project, mostrar_grafic=not args.no_plot)
+
+# Per donar-li run:
+# python coastline_estimator/calculate_erosion.py -p castelldefels_h1_2025
+# python coastline_estimator/analyze.py -p castelldefels_h1_2025

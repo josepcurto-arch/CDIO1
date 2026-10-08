@@ -1,0 +1,25 @@
+geojson_file: "polygon.geojson"
+
+search:
+  catalog_url: "https://earth-search.aws.element84.com/v1"
+  collection: "sentinel-2-l2a"
+  start_date: "2025-01-01"
+  end_date: "2025-06-30"
+  max_cloud_cover: 40
+  target_epsg: "EPSG:4326"
+
+bands:
+  - "red"
+  - "green"
+  - "blue"
+  - "nir"
+
+performance:
+  max_workers: 4
+  chunk_size: 2048
+
+# Noves rutetes de sortida per als resultats analítics
+outputs:
+  waterbody_dir: "outputs/waterbody"
+  coastline_dir: "outputs/coastline"
+  plots_dir: "outputs/plots"
