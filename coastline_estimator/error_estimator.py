@@ -14,7 +14,7 @@ import shoreline_utils as utils
 
 SPATIAL_SPACING = 10
 TRANSECT_LENGTH = 100
-TARGET_GT_DATES = ["2017-05-23", "2019-05-23", "2021-06-11"]
+TARGET_GT_DATES = ["2022-05-18", "2025-01-24", "2025-03-30"]
 
 
 def closest_ground_truth_file(ground_truth_dir, target_date):

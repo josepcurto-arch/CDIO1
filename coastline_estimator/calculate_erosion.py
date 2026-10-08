@@ -52,19 +52,35 @@ def main(projecte, mostrar_grafic=True):
     coordenades_referencia = linies_costa[data_referencia]
 
     print(f"Generant línia de costa base utilitzant la data: {data_referencia}")
-    x = coordenades_referencia[:, 0]
-    y = coordenades_referencia[:, 1]
-    xy_nics = np.unique(np.column_stack((x, y)), axis=0)
-    x_nics = xy_nics[:, 0]
-    y_nics = xy_nics[:, 1]
 
+    # Obtenim la LineString ordenada espacialment
     linia_referencia = utils.build_ordered_linestring(coordenades_referencia, ordered=False)
+
+    # Extraiem les coordenades en l'ordre espacial correcte
+    x_nics, y_nics = linia_referencia.xy
+    x_nics = np.array(x_nics)
+    y_nics = np.array(y_nics)
+
+    # Eliminem punts consecutius idèntics (duplicats adjacents que fan fallar splprep)
+    punts_valids = np.ones(len(x_nics), dtype=bool)
+    punts_valids[1:] = (np.diff(x_nics) != 0) | (np.diff(y_nics) != 0)
+    x_nics = x_nics[punts_valids]
+    y_nics = y_nics[punts_valids]
+
     longitud_costa = linia_referencia.length
-    n_punts = int(longitud_costa / ESPAIAMENT_ESPATIAL)
+    n_punts = max(2, int(longitud_costa / ESPAIAMENT_ESPATIAL))
 
     # Ajust de Spline suavitzat per projectar transectes normals
-    tck, _ = splprep([x_nics, y_nics], s=0)
-    unew = np.linspace(0, 1, num=n_punts)
+    k_degree = min(3, len(x_nics) - 1)
+    if k_degree < 1:
+        print("Error: No hi ha suficients punts únics per generar la spline.", file=sys.stderr)
+        sys.exit(1)
+
+    tck, u = splprep([x_nics, y_nics], s=0, k=k_degree)
+
+    # Assegurem que unew no excedeixi el rang [0, 1] per errors de precisió de punt flotant
+    unew = np.clip(np.linspace(0, 1, num=n_punts), 0.0, 1.0)
+
     x_suau, y_suau = splev(unew, tck)
     dx, dy = splev(unew, tck, der=1)
 
@@ -88,7 +104,7 @@ def main(projecte, mostrar_grafic=True):
             transecte = LineString([inici, fi])
 
             dist = distancia_interseccio_amb_signe(transecte.intersection(linia), px, py, normal)
-            
+
             totes_distancies.append({
                 "date": data,
                 "transect_id": i,
