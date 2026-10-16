@@ -8,7 +8,7 @@ from xml.dom.minidom import Document
 import numpy as np
 import pandas as pd
 from pyproj import Transformer
-from scipy.spatial.distance import cdist
+from scipy.spatial import KDTree
 from shapely.geometry import LineString
 
 
@@ -66,61 +66,56 @@ def load_coords_csv(csv_path, source_crs=32631, target_crs=4326):
     return list(zip(lons, lats))
 
 
-def order_points(n, dist_matrix, starting_point):
-    order = []
-    visited = np.zeros(n, dtype=bool)
-    current = starting_point
-    order.append(current)
-    visited[current] = True
-    sum_distance = 0.0
-
-    for _ in range(n - 1):
-        row = dist_matrix[current].copy()
-        row[visited] = np.inf
-        next_idx = int(np.argmin(row))
-        sum_distance += dist_matrix[current, next_idx]
-        order.append(next_idx)
-        visited[next_idx] = True
-        current = next_idx
-
-    return order, sum_distance
-
-
-def _compute_for_range(coords, dist_matrix, start_range):
-    results = []
-    n = len(coords)
-    for starting_point in start_range:
-        _, sum_distance = order_points(n, dist_matrix, starting_point)
-        results.append((starting_point, sum_distance))
-    return results
-
-
 def build_ordered_linestring(coords, ordered=False):
+    """
+    Ordena eficientment els punts de la línia de costa mitjançant KDTree
+    per evitar problemes de memòria (MemoryError) amb matrius grans.
+    """
     if ordered:
         return LineString(coords)
 
-    coords = np.asarray(coords)
+    coords = np.unique(np.asarray(coords), axis=0)
     n = len(coords)
     if n < 2:
-        raise ValueError("At least two points are required to build a shoreline.")
+        return LineString(coords)
 
-    print(f"Number of points to order: {n}")
-    dist_matrix = cdist(coords, coords, metric="euclidean")
+    print(f"Número de punts a ordenar: {n}")
 
-    num_procs = max(1, mp.cpu_count() - 1)
-    chunk_size = (n + num_procs - 1) // num_procs
-    ranges = [range(i, min(i + chunk_size, n)) for i in range(0, n, chunk_size)]
+    # Cercador espacial basat en KDTree
+    tree = KDTree(coords)
+    unvisited = set(range(n))
 
-    with mp.Pool(processes=num_procs) as pool:
-        results = pool.starmap(
-            _compute_for_range,
-            [(coords, dist_matrix.copy(), start_range) for start_range in ranges],
-        )
+    # Comencem pel punt situat més a l'oest (X mínima)
+    start_idx = int(np.argmin(coords[:, 0]))
+    ordered_idx = [start_idx]
+    unvisited.remove(start_idx)
 
-    sum_distances = dict(sum(results, []))
-    best_starting_point = min(sum_distances, key=sum_distances.get)
-    ordered_indices, _ = order_points(n, dist_matrix, best_starting_point)
-    return LineString(coords[ordered_indices])
+    current_idx = start_idx
+    while unvisited:
+        k_search = min(15, len(coords))
+        distances, indices = tree.query(coords[current_idx], k=k_search)
+
+        if isinstance(indices, (int, np.integer)):
+            indices = [indices]
+
+        next_idx = None
+        for idx in indices:
+            if idx in unvisited:
+                next_idx = idx
+                break
+
+        # Si no troba un veí proper no visitat, selecciona el més proper globalment
+        if next_idx is None:
+            unvisited_list = list(unvisited)
+            sub_tree = KDTree(coords[unvisited_list])
+            _, sub_idx = sub_tree.query(coords[current_idx])
+            next_idx = unvisited_list[sub_idx]
+
+        ordered_idx.append(next_idx)
+        unvisited.remove(next_idx)
+        current_idx = next_idx
+
+    return LineString(coords[ordered_idx])
 
 
 def project_path(project):
