@@ -6,25 +6,24 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.interpolate import splev, splprep
-from shapely.geometry import LineString, MultiPoint, Point
+from pyproj import Transformer
+from shapely.geometry import Point
 
 import shoreline_utils as utils
 
-
-SPATIAL_SPACING = 10
-TRANSECT_LENGTH = 100
 TARGET_GT_DATES = ["2022-05-18", "2025-01-24", "2025-03-30"]
+MAX_DAYS_GAP = 60  # Umbral màxim de dies permès entre Ground Truth i Sentinel-2
 
 
 def closest_ground_truth_file(ground_truth_dir, target_date):
+    """Cerca el fitxer de Ground Truth amb la data més propera, de manera recursiva."""
     base = Path(ground_truth_dir).expanduser().resolve()
     if not base.is_dir():
         print(f"Error: {base} no és un directori vàlid", file=sys.stderr)
         sys.exit(1)
 
     dated_files = []
-    for csv_file in base.glob("*.csv"):
+    for csv_file in base.rglob("*.csv"):
         date = utils.extract_date(csv_file.name)
         if date is not None:
             dated_files.append((date, csv_file))
@@ -42,96 +41,84 @@ def closest_estimated_date(available_dates, gt_date):
     return closest_dt.strftime("%Y-%m-%d"), abs((closest_dt - gt_date).days)
 
 
-def signed_intersection_distance(intersection, px, py, normal):
-    if isinstance(intersection, MultiPoint):
-        distances = [Point(px, py).distance(point) for point in intersection.geoms]
-        return distances[int(np.argmin(distances))]
-
-    if isinstance(intersection, Point):
-        signed_vector = np.array([intersection.x - px, intersection.y - py])
-        distance = np.linalg.norm(signed_vector)
-        if np.dot(signed_vector, normal) < 0:
-            distance = -distance
-        return distance
-
-    return np.nan
-
-
 def process_single_comparison(project_dir, gt_csv_path, s2_date, show_plot=False):
-    """Calcula la distància dels transectes i el RMSE per a una parella (GT, Sentinel-2)."""
+    """Calcula la distància perpendicular directa i el RMSE filtrant per la mateixa finestra espacial."""
     csv_path = project_dir / "output" / "estimated_waterbodies_edges" / "all_shorelines.csv"
     df = pd.read_csv(csv_path)
-    shorelines = {date: group[["x", "y"]].values for date, group in df.groupby("date")}
 
-    if s2_date not in shorelines:
+    if s2_date not in df["date"].values:
         raise ValueError(f"La data {s2_date} no està present a {csv_path}")
 
-    # Carregar Ground Truth
-    try:
-        reference_coords = np.loadtxt(gt_csv_path, delimiter="\t", skiprows=1)
-    except Exception:
-        reference_coords = np.loadtxt(gt_csv_path, delimiter=",", skiprows=1)
+    # 1. Carregar coordenades Sentinel-2 per a la data seleccionada
+    s2_group = df[df["date"] == s2_date]
+    s2_raw = s2_group[["x", "y"]].values.astype(float)
 
-    gt_coords = utils.load_coords_csv(gt_csv_path)
+    # 2. Carregar Ground Truth (fitxer d'ortofoto)
+    gt_coords = np.asarray(utils.load_coords_csv(gt_csv_path), dtype=float)
+    if gt_coords.size == 0 or gt_coords.ndim != 2:
+        raise ValueError(f"No s'han pogut carregar coordenades vàlides de {gt_csv_path}")
+
     utils.export_coords_to_kmz(gt_coords, gt_csv_path.with_suffix(".kmz"))
 
-    x = reference_coords[:, 0]
-    y = reference_coords[:, 1]
-    xy_unique = np.unique(np.column_stack((x, y)), axis=0)
-    x_unique = xy_unique[:, 0]
-    y_unique = xy_unique[:, 1]
+    # 3. Detectar i reprojectar Sentinel-2 a UTM (EPSG:32631) si està en graus geogràfics
+    if np.abs(s2_raw[0, 0]) < 1000:
+        # A Castelldefels/Catalunya: Lon ~ 1.9 - 2.0, Lat ~ 41.2 - 41.3
+        if s2_raw[0, 0] < 10:  # És (Lon, Lat)
+            lon, lat = s2_raw[:, 0], s2_raw[:, 1]
+        else:  # És (Lat, Lon)
+            lat, lon = s2_raw[:, 0], s2_raw[:, 1]
 
-    reference_line = utils.build_ordered_linestring(np.column_stack((x, y)), ordered=True)
-    shoreline_length = reference_line.length
-    n_points = int(shoreline_length / SPATIAL_SPACING)
+        transformer = Transformer.from_crs(4326, 32631, always_xy=True)
+        x_m, y_m = transformer.transform(lon, lat)
+        s2_utm = np.column_stack((x_m, y_m))
+    else:
+        s2_utm = s2_raw
 
-    tck, _ = splprep([x_unique, y_unique], s=0)
-    unew = np.linspace(0, 1, num=n_points)
-    x_smooth, y_smooth = splev(unew, tck)
-    dx, dy = splev(unew, tck, der=1)
+    # 4. Assegurar que Ground Truth també estigui en UTM 31N
+    if np.abs(gt_coords[0, 0]) < 1000:
+        if gt_coords[0, 0] < 10:
+            lon, lat = gt_coords[:, 0], gt_coords[:, 1]
+        else:
+            lat, lon = gt_coords[:, 0], gt_coords[:, 1]
 
-    line = utils.build_ordered_linestring(shorelines[s2_date], False)
+        transformer = Transformer.from_crs(4326, 32631, always_xy=True)
+        x_m, y_m = transformer.transform(lon, lat)
+        gt_utm = np.column_stack((x_m, y_m))
+    else:
+        gt_utm = gt_coords
 
-    distance_results = []
-    for i in range(len(unew)):
-        px, py = x_smooth[i], y_smooth[i]
-        tx, ty = dx[i], dy[i]
-        normal = np.array([-ty, tx])
-        normal_len = np.linalg.norm(normal)
-        if normal_len > 0:
-            normal /= normal_len
+    # ------------------------------------------------------------------
+    # 5. FILTRE ESPATIAL: Retallar el Ground Truth al mateix rang X que Sentinel-2
+    # ------------------------------------------------------------------
+    min_x, max_x = np.min(s2_utm[:, 0]) - 100, np.max(s2_utm[:, 0]) + 100
+    mask_spatial = (gt_utm[:, 0] >= min_x) & (gt_utm[:, 0] <= max_x)
+    gt_utm_filtered = gt_utm[mask_spatial]
 
-        start = (px - normal[0] * TRANSECT_LENGTH / 2, py - normal[1] * TRANSECT_LENGTH / 2)
-        end = (px + normal[0] * TRANSECT_LENGTH / 2, py + normal[1] * TRANSECT_LENGTH / 2)
-        transect = LineString([start, end])
+    if len(gt_utm_filtered) < 2:
+        print(f"Avís: El Ground Truth {gt_csv_path.name} no se superposa espacialment amb el rang del projecte.")
+        return np.nan
 
-        distance = signed_intersection_distance(transect.intersection(line), px, py, normal)
-        distance_results.append(
-            {
-                "date": s2_date,
-                "transect_id": i,
-                "reference_x": px,
-                "reference_y": py,
-                "distance_m": distance,
-            }
-        )
+    # 6. Geometries Shapely en metres
+    reference_line = utils.build_ordered_linestring(gt_utm_filtered, ordered=False)
+    s2_line = utils.build_ordered_linestring(s2_utm, ordered=False)
 
-    distance_df = pd.DataFrame(distance_results)
-    valid_distances = distance_df["distance_m"].dropna()
-    
-    # RMSE formula: sqrt(mean((x_i - x_hat_i)^2 + (y_i - y_hat_i)^2))
-    rmse = np.sqrt((valid_distances ** 2).mean()) if not valid_distances.empty else np.nan
+    # 7. Càlcul de distàncies d'error punt a línia en metres
+    distances = [Point(pt[0], pt[1]).distance(s2_line) for pt in gt_utm_filtered]
+    distances = np.array(distances)
+    valid_distances = distances[~np.isnan(distances)]
+
+    # 8. RMSE en metres reals
+    rmse = np.sqrt((valid_distances ** 2).mean()) if len(valid_distances) > 0 else np.nan
 
     if show_plot:
         fig, ax = plt.subplots(figsize=(12, 8))
         x_ref, y_ref = reference_line.xy
-        ax.plot(x_ref, y_ref, "k--", label=f"Línia de referència GT", alpha=0.5)
-        ax.plot(x_smooth, y_smooth, "b", label=f"Línia suavitzada GT", alpha=0.7)
-        x_line, y_line = line.xy
-        ax.plot(x_line, y_line, "r-", label=f"Estimació Sentinel-2 ({s2_date})", alpha=0.7)
-        ax.set_title(f"Validació Línia de Costa vs Ground Truth ({s2_date})")
-        ax.set_xlabel("X (m)")
-        ax.set_ylabel("Y (m)")
+        ax.plot(x_ref, y_ref, "k--", label="Ground Truth (Retallat)", alpha=0.7)
+        x_line, y_line = s2_line.xy
+        ax.plot(x_line, y_line, "r-", label=f"Sentinel-2 ({s2_date})", alpha=0.7)
+        ax.set_title(f"Validació Línia de Costa vs Ground Truth ({s2_date}) - RMSE: {rmse:.2f} m")
+        ax.set_xlabel("UTM X (m)")
+        ax.set_ylabel("UTM Y (m)")
         ax.legend()
         ax.axis("equal")
         plt.grid(True)
@@ -153,7 +140,6 @@ def main(project, ground_truth, date=None, show_plot=True):
     available_dates = df["date"].unique().tolist()
 
     validation_summary = []
-
     gt_dates_to_process = [date] if date else TARGET_GT_DATES
 
     for gt_date_str in gt_dates_to_process:
@@ -162,15 +148,21 @@ def main(project, ground_truth, date=None, show_plot=True):
             ref_date, gt_csv_path = closest_ground_truth_file(ground_truth, gt_date)
             s2_date, time_gap = closest_estimated_date(available_dates, gt_date)
 
-            print(f"Calculant RMSE per Ground Truth {gt_date_str} vs Sentinel-2 {s2_date}...")
-            rmse_val = process_single_comparison(
-                project_dir, gt_csv_path, s2_date, show_plot=show_plot
-            )
+            if time_gap > MAX_DAYS_GAP:
+                print(
+                    f"Avís: S'omet la data GT {gt_date_str} per un desfase temporal excessiu ({time_gap} dies > {MAX_DAYS_GAP} dies)."
+                )
+                rmse_val = np.nan
+            else:
+                print(f"Calculant RMSE per Ground Truth {gt_date_str} vs Sentinel-2 {s2_date}...")
+                rmse_val = process_single_comparison(
+                    project_dir, gt_csv_path, s2_date, show_plot=show_plot
+                )
 
             validation_summary.append(
                 {
                     "Ground truth date": gt_date_str,
-                    "Sentinel 2 date": s2_date,
+                    "Sentinel 2 date": s2_date if time_gap <= MAX_DAYS_GAP else "N/A",
                     "Time gap (days)": time_gap,
                     "RMSE (meters)": round(rmse_val, 2) if not np.isnan(rmse_val) else "N/A",
                 }
@@ -178,7 +170,6 @@ def main(project, ground_truth, date=None, show_plot=True):
         except Exception as e:
             print(f"Avís: No s'ha pogut processar la data {gt_date_str}: {e}")
 
-    # Generar i guardar la taula de resultats finals
     results_df = pd.DataFrame(validation_summary)
     results_df.to_csv(output_dir / "rmse_validation_summary.csv", index=False)
 
@@ -205,9 +196,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("-d", "--date", required=False, help="Data concreta de Ground Truth a comparar (YYYY-MM-DD).")
     parser.add_argument("--no-plot", action="store_true", help="No mostrar gràfics visuals.")
-    
+
     args = parser.parse_args()
     main(args.project, args.ground_truth, args.date, show_plot=not args.no_plot)
 
-# Per donar-li run:
 # python coastline_estimator/error_estimator.py -p castelldefels_h1_2025 -g coastline_estimator/projects/castelldefels_h1_2025/input/ground_truth --no-plot
