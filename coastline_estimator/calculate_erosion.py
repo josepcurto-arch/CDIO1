@@ -5,6 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from pyproj import Transformer
 from scipy.interpolate import splev, splprep
 from shapely.geometry import LineString, MultiPoint, Point
 
@@ -12,6 +13,20 @@ import shoreline_utils as utils
 
 ESPAIAMENT_ESPATIAL = 10   # Distància entre transectes (en metres)
 LONGITUD_TRANSECTE = 100  # Longitud de cada transecte (en metres)
+
+
+def reproject_to_utm(coords_deg, source_crs=4326, target_crs=32631):
+    """Reprojecta coordenades en graus (EPSG:4326) a metres UTM Zona 31N (EPSG:32631)."""
+    if len(coords_deg) == 0:
+        return coords_deg
+    
+    # Comprovar si ja estan en UTM (si X > 1000 ja estan en metres)
+    if coords_deg[0, 0] > 1000:
+        return coords_deg
+        
+    transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
+    x_m, y_m = transformer.transform(coords_deg[:, 0], coords_deg[:, 1])
+    return np.column_stack((x_m, y_m))
 
 
 def distancia_interseccio_amb_signe(interseccio, px, py, normal):
@@ -41,27 +56,30 @@ def main(projecte, mostrar_grafic=True):
         sys.exit(1)
 
     df = pd.read_csv(ruta_csv)
-    linies_costa = {data: grup[["x", "y"]].values for data, grup in df.groupby("date")}
+    
+    # 1. Carregar i convertir totes les línies de costa a metres (UTM)
+    linies_costa = {}
+    for data, grup in df.groupby("date"):
+        coords_raw = grup[["x", "y"]].values
+        coords_utm = reproject_to_utm(coords_raw)
+        linies_costa[data] = coords_utm
 
     if len(linies_costa) < 2:
         print("Calen almenys 2 dates a all_shorelines.csv per calcular l'erosió/acreditació.", file=sys.stderr)
         sys.exit(1)
 
-    # 1. Utilitzem la primera data com a línia de base per construir la referència
+    # 2. Utilitzem la primera data com a línia de base per construir la referència
     data_referencia = sorted(linies_costa.keys())[0]
     coordenades_referencia = linies_costa[data_referencia]
 
-    print(f"Generant línia de costa base utilitzant la data: {data_referencia}")
+    print(f"Generant línia de costa base en metres (UTM) utilitzant la data: {data_referencia}")
 
-    # Obtenim la LineString ordenada espacialment
     linia_referencia = utils.build_ordered_linestring(coordenades_referencia, ordered=False)
 
-    # Extraiem les coordenades en l'ordre espacial correcte
     x_nics, y_nics = linia_referencia.xy
     x_nics = np.array(x_nics)
     y_nics = np.array(y_nics)
 
-    # Eliminem punts consecutius idèntics (duplicats adjacents que fan fallar splprep)
     punts_valids = np.ones(len(x_nics), dtype=bool)
     punts_valids[1:] = (np.diff(x_nics) != 0) | (np.diff(y_nics) != 0)
     x_nics = x_nics[punts_valids]
@@ -70,15 +88,12 @@ def main(projecte, mostrar_grafic=True):
     longitud_costa = linia_referencia.length
     n_punts = max(2, int(longitud_costa / ESPAIAMENT_ESPATIAL))
 
-    # Ajust de Spline suavitzat per projectar transectes normals
     k_degree = min(3, len(x_nics) - 1)
     if k_degree < 1:
         print("Error: No hi ha suficients punts únics per generar la spline.", file=sys.stderr)
         sys.exit(1)
 
     tck, u = splprep([x_nics, y_nics], s=0, k=k_degree)
-
-    # Assegurem que unew no excedeixi el rang [0, 1] per errors de precisió de punt flotant
     unew = np.clip(np.linspace(0, 1, num=n_punts), 0.0, 1.0)
 
     x_suau, y_suau = splev(unew, tck)
@@ -86,7 +101,7 @@ def main(projecte, mostrar_grafic=True):
 
     totes_distancies = []
 
-    # 2. Calcular distàncies a cada transecte per a totes les dates
+    # 3. Calcular distàncies a cada transecte per a totes les dates
     for data, coordenades in linies_costa.items():
         print(f"Processant data: {data}...")
         linia = utils.build_ordered_linestring(coordenades, ordered=False)
@@ -113,15 +128,15 @@ def main(projecte, mostrar_grafic=True):
                 "distance_m": dist
             })
 
-    # Desar el CSV de distàncies per data i transecte
+    # Desar el CSV de distàncies
     df_distancies = pd.DataFrame(totes_distancies)
     csv_sortida = directori_sortida / "shoreline_distances.csv"
     df_distancies.to_csv(csv_sortida, index=False)
     print(f"\nResultats desats correctament a: {csv_sortida}")
 
-    # Gràfic explicatiu si no es desactiva
+    # Gràfic
     if mostrar_grafic:
-        plt.figure(figsize=(10, 5))
+        plt.figure(figsize=(12, 6))
         df_mitjana = df_distancies.groupby("date")["distance_m"].mean().reset_index()
         plt.plot(df_mitjana["date"], df_mitjana["distance_m"], marker="o", linestyle="-", color="tab:blue")
         plt.xlabel("Data")
@@ -145,6 +160,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args.project, mostrar_grafic=not args.no_plot)
 
+
 # Per donar-li run:
 # python coastline_estimator/calculate_erosion.py -p castelldefels_h1_2025
-# python coastline_estimator/analyze.py -p castelldefels_h1_2025
+# python coastline_estimator/analyze.py -p castelldefels_h1_2025 
+# AMB LA SEGONA ELS DOS GRÀFICS DE SORTIDA, AMB LA PRIMERA NOMÉS EL CSV DE DISTÀNCIES.
