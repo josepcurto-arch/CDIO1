@@ -11,6 +11,11 @@ from shapely.geometry import LineString, MultiPoint, Point
 
 import shoreline_utils as utils
 
+"""
+Aquest codi agafa la primera linea de costa disponible, la suavitza convertint-la en una funció i acte seguit la divideix en transectes. En cada un d'aquest transectes, es crea una recta perpendicular a la línea de costa que servirà per poder calcular la evolució de la costa
+Aleshores per totes les dates seguents pren la distància entre les interseccions de la recta perpendicular amb la línea de costa de referència i la linea de costa que s'està evaluant
+"""
+
 ESPAIAMENT_ESPATIAL = 10   # Distància entre transectes (en metres)
 LONGITUD_TRANSECTE = 100  # Longitud de cada transecte (en metres)
 

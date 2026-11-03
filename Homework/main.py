@@ -3,6 +3,8 @@ import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+import subprocess
 
 import matplotlib
 # Configurar backend no interactiu ABANS d'importar pyplot (crític per multithreading)
@@ -92,9 +94,11 @@ folders = {
     'nir': os.path.join(project_root, 'banda_nir'),
     'ndwi': os.path.join(project_root, 'ndwi'),
     'rgb': os.path.join(project_root, 'rgb'),
-    'waterbody': os.path.join(project_root, output_cfg.get('waterbody_dir', 'outputs/waterbody')),
-    'coastline': os.path.join(project_root, output_cfg.get('coastline_dir', 'outputs/coastline')),
-    'plots': os.path.join(project_root, output_cfg.get('plots_dir', 'outputs/plots'))
+    'waterbody': os.path.join(project_root,"outputs", output_cfg.get('waterbody_dir')),#El segon argument de la funció GET serveix com a valor per defecet en el cas que en el fitxer de configuració no hi aparegui 
+    'coastline': os.path.join(project_root,"outputs", output_cfg.get('coastline_dir')),#
+    'plots': os.path.join(project_root,"outputs", output_cfg.get('plots_dir')),#
+    'shorelines': os.path.join(project_root,"outputs", output_cfg.get('shoreline_dir'))
+    #
 }
 
 for folder_path in folders.values():
@@ -172,13 +176,15 @@ def process_single_date(t_idx):
         ax_c.axis('off')
         fig_c.savefig(os.path.join(folders['plots'], f'coastline_{date_str}.png'), bbox_inches='tight', dpi=150)
         plt.close(fig_c)
-
         print(f"Completada la data: {date_str}")
         return date_str
+
 
     except Exception as e:
         print(f"Error processant t_idx {t_idx}: {e}")
         return None
+
+
 
 # ------------------------------------------------------------------------------
 # 6. EXECUCIÓ PRINCIPAL
@@ -194,3 +200,79 @@ if __name__ == '__main__':
 
     end_multi = time.time()
     print(f"\nProcés finalitzat amb èxit en {end_multi - start_multi:.2f} segons!")
+
+    ## Executem el codi extern De EXTRACT SHORELINES
+    
+    arguments_ExtractShorelines = [sys.executable,
+                                   os.path.join(config["externalScripts"]["dir"],config["externalScripts"]["NomExtractShorelines"]),
+                                   "-p",
+                                   config["externalScripts"]["Project"],
+                                   "--mask-dir",
+                                   folders['waterbody'],
+                                   "--polygon" ,
+                                   geojson_path]
+
+        #os.path.join(config["externalScripts"]["dir"],"projects", "castelldefels_h1_2025"),
+        #python extract_shorelines.py -p castelldefels_h1_2025 --mask-dir /home/cbltic/CDIO1/Homework/outputs/waterbody --polygon /home/cbltic/CDIO1/Homework/API/polygon.geojson
+    resultat_ExtractShorelines = subprocess.run(arguments_ExtractShorelines,  capture_output=True, text=True)
+    if resultat_ExtractShorelines == 0:
+        print("Extract Shorelines executat amb èxit")
+
+    else:
+        print("Error en executar Extract_shorelines")
+        print(resultat_ExtractShorelines.stderr)
+
+
+ ## Executem el codi extern De CALCULETE EROSION
+    
+    arguments_CalculateErosion = [sys.executable, #això és com dir python
+                                   os.path.join(config["externalScripts"]["dir"],config["externalScripts"]["NomErosion"]), #aqui et diu el nom del programa
+                                   "-p",
+                                   config["externalScripts"]["Project"]]
+    
+    resultat_CalculateErosion = subprocess.run(arguments_CalculateErosion,  capture_output=True, text=True)
+    if resultat_CalculateErosion == 0:
+        print("CalculateErosion executat amb èxit")
+    else:
+        print("Error en executar CalculateErosion")
+        print(resultat_CalculateErosion.stderr)
+
+ ## Executem el codi extern De analize.py
+    
+    arguments_Analize = [sys.executable, #això és com dir python
+                                   os.path.join(config["externalScripts"]["dir"],config["externalScripts"]["NomAnalize"]), #aqui et diu el nom del programa
+                                   "-p",
+                                   config["externalScripts"]["Project"]]
+    
+    resultat_Analize = subprocess.run(arguments_Analize,  capture_output=True, text=True)
+
+    if resultat_Analize == 0:
+        print("Analize executat amb èxit")
+    else:
+        print("Error en executar Analize")
+        print(resultat_Analize.stderr)
+
+ ## Executem el codi extern De errorEstimator.py
+    
+    arguments_ErrorEstimator = [sys.executable, #això és com dir python
+                                   os.path.join(config["externalScripts"]["dir"],config["externalScripts"]["NomError"]), #aqui et diu el nom del programa
+                                   "-p",
+                                   config["externalScripts"]["Project"],
+                                   "-g",
+                                   os.path.join("coastline_estimator","projects","castelldefels_h1_2025","input","ground_truth"),
+                                   "--no-plot"
+                                   ]
+
+    resultat_ErrorEstimator = subprocess.run(arguments_ErrorEstimator,  capture_output=True, text=True)
+    
+    if resultat_ErrorEstimator == 0:
+        print("Error Estimator executat amb èxit")
+        print(resultat_ErrorEstimator.stdout)
+
+    else:
+        print("Error en executar Error estimator")
+        print(resultat_ErrorEstimator.stderr)
+        print(resultat_ErrorEstimator.stdout)
+
+
+
