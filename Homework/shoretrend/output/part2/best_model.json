@@ -1,0 +1,34 @@
+{
+  "model": "step",
+  "n_freq": 2,
+  "reason": "menor RMSE de validació 2024",
+  "comparison": {
+    "linear": {
+      "RMSE": 4.5058,
+      "MAE": 3.7513,
+      "R2": 0.576,
+      "AIC": 305.0318,
+      "n_params": 8,
+      "val_RMSE_2024": 7.0721,
+      "val_MAE_2024": 6.7237
+    },
+    "step": {
+      "RMSE": 3.5595,
+      "MAE": 2.8865,
+      "R2": 0.7354,
+      "AIC": 261.7696,
+      "n_params": 9,
+      "val_RMSE_2024": 2.7919,
+      "val_MAE_2024": 2.3998
+    },
+    "sigmoid": {
+      "RMSE": 3.4746,
+      "MAE": 2.808,
+      "R2": 0.7479,
+      "AIC": 261.1336,
+      "n_params": 11,
+      "val_RMSE_2024": 2.8647,
+      "val_MAE_2024": 2.4095
+    }
+  }
+}

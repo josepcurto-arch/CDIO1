@@ -20,6 +20,7 @@ def main(project):
     colors = plt.cm.tab10.colors
     markers = itertools.cycle(("o", "s", "^", "D", "v", "<", ">", "p", "*", "h"))
 
+    # 1. Gràfic de perfil espacial per transecte
     plt.figure(figsize=(12, 6))
     for i, (date, group) in enumerate(df.groupby("date")):
         plt.plot(
@@ -31,32 +32,33 @@ def main(project):
             linestyle="-",
         )
 
-    plt.xlabel("Transect ID")
-    plt.ylabel("Distance (m)")
-    plt.title("Shoreline Distance by Transect and Date")
+    plt.xlabel("ID del Transecte")
+    plt.ylabel("Distància (m)")
+    plt.title("Distància de la Línia de Costa per Transecte i Data")
     plt.grid(True)
-    plt.legend(title="Date")
+    plt.legend(title="Data")
     plt.tight_layout()
     plt.show()
 
+    # 2. Gràfic d'evolució temporal mitjana
     avg_df = df.groupby("date")["distance_m"].mean().reset_index()
     plt.figure(figsize=(10, 5))
     plt.plot(avg_df["date"], avg_df["distance_m"], marker="o", linestyle="-", color="tab:blue")
-    plt.xlabel("Date")
-    plt.ylabel("Average Distance (m)")
-    plt.title("Average Shoreline Distance Over Time")
+    plt.xlabel("Data")
+    plt.ylabel("Distància Mitjana (m)")
+    plt.title("Distància Mitjana de la Línia de Costa al Llarg del Temps")
     plt.grid(True)
     plt.tight_layout()
     plt.show()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Plot erosion and accretion outputs.")
+    parser = argparse.ArgumentParser(description="Representa els resultats d'erosió i acreditació.")
     parser.add_argument(
         "-p",
         "--project",
         required=True,
-        help="Project name under coastline_estimator/projects.",
+        help="Nom del projecte ubicat a coastline_estimator/projects.",
     )
     args = parser.parse_args()
     main(args.project)

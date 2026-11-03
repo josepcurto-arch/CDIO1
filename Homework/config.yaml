@@ -1,0 +1,41 @@
+#Flowchart edit link:
+# https://lucid.app/lucidchart/5b1ab621-3456-4610-a3a3-7d8e0113f385/edit?viewport_loc=-883%2C-659%2C3489%2C1958%2C0_0&invitationId=inv_b620eb56-ebf2-4a15-9785-7d4469361029
+
+geojson_file: "polygon.geojson"
+
+search:
+  catalog_url: "https://earth-search.aws.element84.com/v1"
+  collection: "sentinel-2-l2a"
+  start_date: "2025-01-01"
+  end_date: "2025-06-30"
+  max_cloud_cover: 40
+  target_epsg: "EPSG:4326"
+
+bands:
+  - "red"
+  - "green"
+  - "blue"
+  - "nir"
+
+performance:
+  max_workers: 100
+  chunk_size: 2048
+
+# Noves rutetes de sortida per als resultats analítics
+outputs:
+  waterbody_dir: "outputs/waterbody"
+  coastline_dir: "outputs/coastline"
+  plots_dir: "outputs/plots"
+  shoreline_dir: "shoreline"
+
+#direccions de scripts extersn
+externalScripts:
+  dir: "coastline_estimator" #camí relatiu a la carpeta on estan els scripts del professorat
+  NomErosion: "calculate_erosion.py"
+  NomError: "error_estimator.py"
+  NomExtractShorelines: "extract_shorelines.py"
+  NomShorelineUtils: "shoreline_utils.py"
+  NomAnalize: "analyze.py"
+  Project: "castelldefels_h1_2025"
+
+
