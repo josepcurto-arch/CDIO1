@@ -1,2 +1,21 @@
-# Created by venv; see https://docs.python.org/3/library/venv.html
-*
+# Entorn virtual (la venv és a l'arrel del repositori)
+Lib/
+Scripts/
+Include/
+share/
+etc/
+pyvenv.cfg
+
+# Python
+__pycache__/
+*.pyc
+
+# Dades i figures generades
+*.tif
+*.png
+# ...excepte les figures de ShoreTrend, que van al report
+!Homework/shoretrend/output/**/*.png
+
+# Sortides dels scripts de classe (time_series/s11_*)
+time_series/models/
+time_series/output/
