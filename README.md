@@ -71,63 +71,14 @@ CDIO1/
 
 ```mermaid
 flowchart TD
-    %% ---------- Entrades ----------
-    subgraph IN["Entrades"]
-        CFG["Homework/config.yaml<br/>dates, núvols, bandes, rutes"]
-        AOI["Homework/API/polygon.geojson<br/>àrea de Castelldefels"]
-        STAC[("Catàleg STAC<br/>Earth Search · Sentinel-2 L2A")]
-        GT["Ortofotos AMB/ICGC<br/>ground_truth/*.csv"]
-        ATENEA["CSV del professorat<br/>shoreline_distances_2017_2024.csv<br/>shoreline_distances_h1_2025.csv"]
-    end
-
-    %% ---------- Pipeline principal ----------
-    subgraph MAIN["Homework/main.py · pipeline principal"]
-        SEARCH["Cerca STAC<br/>filtre de núvols"] --> STACK["stackstac<br/>cub temps × banda × y × x"]
-        STACK --> PAR["ThreadPoolExecutor<br/>una data per fil"]
-        PAR --> BANDS["Exportar bandes R, G, B, NIR<br/>i RGB (GeoTIFF)"]
-        PAR --> NDWI["NDWI = (G − NIR) / (G + NIR)"]
-        NDWI --> WATER["detect_waterbody<br/>NDWI > 0 → aigua"]
-        WATER --> COAST["estimate_coastline<br/>gradient morfològic"]
-        COAST --> PNG["GeoTIFF + PNG per data"]
-    end
-
-    %% ---------- Coastline estimator ----------
-    subgraph CE["coastline_estimator · cridat per main.py amb subprocess"]
-        EXT["extract_shorelines.py<br/>vores de la màscara dins l'AOI"] --> ALL["all_shorelines.csv<br/>x, y, date"]
-        ALL --> ERO["calculate_erosion.py<br/>transectes cada 10 m"]
-        ERO --> DIST["shoreline_distances.csv<br/>date, transect_id, distance_m"]
-        DIST --> ANA["analyze.py<br/>gràfics"]
-        ALL --> ERR["error_estimator.py<br/>distància punt-línia"]
-        ERR --> RMSE["rmse_validation_summary.csv"]
-    end
-
-    %% ---------- ShoreTrend ----------
-    subgraph ST["Homework/shoretrend · S10 + S11 + S12"]
-        P1["s10_1_data_preparation.py<br/>neteja + sèrie mensual"] --> P2["s10_2_data_analysis.py<br/>tendència + FFT, Gloria,<br/>velocitat i acceleració"]
-        P2 --> P3["s12_forecasting.py<br/>paramètric + LSTM/GRU<br/>predicció gener-juny 2025"]
-        P3 --> FC["Prediccions, IC 95%,<br/>mètriques i figures"]
-    end
-
-    CFG --> SEARCH
-    AOI --> SEARCH
-    STAC --> SEARCH
-    WATER -->|"màscares waterbody_*.tif"| EXT
-    AOI --> EXT
-    GT --> ERR
-    ATENEA --> P1
-    DIST -.-|"mateix format,<br/>altra referència"| ATENEA
-
-    %% ---------- Mòduls de classe ----------
-    subgraph CLASS["Mòduls de classe (independents)"]
-        AF["acquisition_forecaster<br/>plans KML, TLE, històric STAC"]
-        TS["time_series<br/>S09 ML · S11 predicció Jena"]
-        DN["denoising<br/>boxcar, bilateral"]
-        PB["programming_basics<br/>S02"]
-        GN["gnss<br/>receptor u-blox"]
-        UT["utils.py<br/>visor GeoTIFF"]
-    end
-    TS -.->|"mateixes tècniques"| P3
-    STAC --> AF
+    A["Sèrie 2017-2024<br/>shoreline_distances.csv"] --> B["1 · Preparació<br/>sèrie temporal mensual<br/>+ anàlisi de dades que falten"]
+    B --> C["2 · Anàlisi<br/>tendència + temporal Gloria"]
+    C --> D["Model paramètric<br/>tendència + FFT"]
+    C --> E["Xarxes recurrents<br/>LSTM / GRU"]
+    D --> F["3 · Predicció<br/>gener-juny 2025<br/>amb el millor model"]
+    E --> F
+    G["Observacions reals<br/>gener-juny 2025"] --> H
+    F --> H["4 · Avaluació<br/>comparació amb dades reals<br/>RMSE · MAE · R²"]
 ```
 
 **Com llegir-lo.** Hi ha tres blocs de feina del grup, encadenats:
