@@ -27,15 +27,6 @@ python -m venv .                       # només la primera vegada
 Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Llibreries que fa servir el codi però **no són a `requirements.txt`**:
-
-| Paquet | Per a què | Instal·lació |
-|---|---|---|
-| `torch` | Backend de Keras per a LSTM/GRU (TensorFlow no existeix per a Python 3.14) | `Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu` |
-| `stackstac`, `pyyaml` | Pipeline de Sentinel-2 (`Homework/main.py`) | `Scripts\python.exe -m pip install stackstac pyyaml` |
-| `pytest` | Tests unitaris | `Scripts\python.exe -m pip install pytest` |
-| `pyserial`, `pyubx2` | Receptor GNSS (`gnss/`) | `Scripts\python.exe -m pip install pyserial pyubx2` |
-
 > **Executa sempre els scripts des de l'arrel del repositori.** Molts fan servir rutes relatives (`coastline_estimator/...`, `acquisition_forecaster/projects/...`, `Homework/Big_Data/...`).
 
 ---
